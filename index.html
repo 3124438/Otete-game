@@ -12,7 +12,6 @@
   #skeleton-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;}
   .fall-object{position:absolute;z-index:3;pointer-events:none;object-fit:contain;}
 
-  /* ゲームUI */
   #game-hud{
     position:absolute;top:0;left:0;right:0;z-index:10;
     display:flex;justify-content:space-between;align-items:flex-start;
@@ -109,8 +108,7 @@
 // ================================================================
 //  設定
 // ================================================================
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzz4slAXjyrOX5KF0y5Fwd9uLi7UokV1vkDE6_5WSCCvI0mTSHcrzZjwWu6c6wdo8dN/exec';
-const IS_GAME_MODE = true;
+const GAS_URL = 'https://script.google.com/macros/s/YOUR_DEPLOY_ID/exec';
 
 // ================================================================
 //  グローバル状態
@@ -120,7 +118,6 @@ let showSkeleton  = true;
 let audioUnlocked = false;
 let gameSettings  = { initialTime: 60, maxFallSpeed: 20, speedUpRate: 5 };
 
-// ゲーム進行状態
 let score            = 0;
 let currentSpeedBuff = 0;
 let timeLeft          = 60;
@@ -128,12 +125,9 @@ let gameRunning       = false;
 let timerInterval     = null;
 let spawnInterval     = null;
 
-// 落下オブジェクト管理
-// { id, defIndex, def, x, y, size, el, caught }
-let fallingObjects = [];
+let fallingObjects = []; // { def, x, y, size, el, caught }
 let objIdCounter   = 0;
 
-// 現在の手の状態（MediaPipe結果から毎フレーム更新）
 let latestHands = []; // [{ lms, handedness, bounds }]
 
 // ================================================================
@@ -252,11 +246,28 @@ channel.onmessage = (e) => {
 };
 
 // ================================================================
+//  出現頻度（%）に基づく重み付き抽選
+// ================================================================
+function pickWeightedGesture() {
+  const total = gestureDefs.reduce((sum, g) => sum + (g.frequency || 0), 0);
+  if (total <= 0) {
+    // 全て頻度0の場合は均等抽選にフォールバック
+    return gestureDefs[Math.floor(Math.random() * gestureDefs.length)];
+  }
+  let r = Math.random() * total;
+  for (const g of gestureDefs) {
+    r -= (g.frequency || 0);
+    if (r <= 0) return g;
+  }
+  return gestureDefs[gestureDefs.length - 1];
+}
+
+// ================================================================
 //  オブジェクトのスポーン・落下
 // ================================================================
 function spawnObject() {
   if (!gameRunning || !gestureDefs.length) return;
-  const def = gestureDefs[Math.floor(Math.random() * gestureDefs.length)];
+  const def = pickWeightedGesture();
 
   let el;
   if (def.mediaType === 'video') {
@@ -269,7 +280,7 @@ function spawnObject() {
   el.className = 'fall-object';
   el.src = def.mediaUrl;
 
-  const size = 90;
+  const size = def.size || 90;
   const x    = Math.random() * (window.innerWidth - size);
   el.style.width  = size + 'px';
   el.style.height = size + 'px';
@@ -316,19 +327,17 @@ function updateFallingObjects() {
       const touchRadius = (obj.size/2) + (hand.bounds.size/2) * 0.5;
 
       if (distTouch < touchRadius) {
-        // ポーズ一致判定
         if (matchGesture(hand.lms, hand.handedness, obj.def)) {
           // キャッチ成功
           obj.caught = true;
           score += obj.def.point;
           currentSpeedBuff += obj.def.point * (gameSettings.speedUpRate / 100);
-          timeLeft += obj.def.duration;
           updateHud();
           if (obj.def.audioUrl) playAudio(obj.def.audioUrl);
           toRemove.push(obj);
           break;
         }
-        // ポーズ不一致 → キャッチできずすり抜け続行（何もしない）
+        // ポーズ不一致 → キャッチできずすり抜け続行
       }
     }
   }
